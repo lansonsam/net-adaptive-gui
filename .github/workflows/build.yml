@@ -1,7 +1,7 @@
 name: build-arm64
 
-# 在 GitHub 托管的原生 ARM64 (aarch64) Linux runner 上编译,
-# 无需交叉编译, apt 直接装依赖。产物在 Actions 的 Artifacts 里下载。
+# 在原生 ARM64 runner 上、于 Debian 11 容器(glibc 2.31)内编译,
+# 以兼容较老 glibc 的 ARM 设备。产物在 Actions 的 Artifacts 里下载。
 on:
   push:
     branches: [ main, master ]
@@ -9,18 +9,22 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04-arm       # 原生 aarch64 runner (公开仓库免费)
+    runs-on: ubuntu-22.04-arm          # 原生 aarch64 runner
+    container: debian:11               # glibc 2.31, 向下兼容老设备
     steps:
-      - uses: actions/checkout@v4
-
-      - name: 安装系统依赖 (Slint 链接期需要 fontconfig)
+      - name: 装基础工具与 Slint 依赖
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates gcc g++ make pkg-config git \
             libfontconfig1-dev libfreetype6-dev libxkbcommon-dev file
 
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+
+      - name: 装 Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: 编译 CLI (net-adaptive-test)
         working-directory: net-adaptive-test
@@ -35,8 +39,9 @@ jobs:
           mkdir -p dist
           cp net-adaptive-test/target/release/net-adaptive-test dist/
           cp net-adaptive-gui/target/release/net-adaptive-gui  dist/
-          echo "=== 架构确认 ==="
+          echo "=== 架构 & glibc 需求 ==="
           file dist/*
+          objdump -T dist/net-adaptive-gui | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -3
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
