@@ -1,4 +1,4 @@
-import { Button, LineEdit, ComboBox, CheckBox, Switch, SpinBox, ScrollView, ListView, ProgressIndicator, Palette } from "std-widgets.slint";
+import { Button, LineEdit, CheckBox, Switch, SpinBox, ScrollView, ListView, ProgressIndicator, Palette } from "std-widgets.slint";
 
 // ───────────── 调色板 (dataviz 校验值, 暗色表面) ─────────────
 global Pal {
@@ -10,17 +10,16 @@ global Pal {
     out property <color> ink2:    #c3c2b7;
     out property <color> muted:   #898781;
     out property <color> grid:    #2c2c2a;
-    out property <color> accent:  #3987e5;   // 单序列蓝 (dark series-1)
+    out property <color> accent:  #3987e5;
     out property <color> good:    #0ca30c;
     out property <color> warn:    #fab219;
     out property <color> crit:    #d03b3b;
 }
 
 export struct HostRow  { ip: string, mac: string, is-self: bool }
+export struct NicRow   { name: string, detail: string, up: bool }
 export struct TierRow  { label: string, loss: string, avg: string, jit: string, err: string, verdict: string, color: color, link: string }
-export struct ChartPoint { x: float, y: float, value: string, label: string }
 
-// 结果卡里的判定徽章
 component Chip inherits Rectangle {
     in property <string> text;
     in property <color> tint;
@@ -30,11 +29,8 @@ component Chip inherits Rectangle {
     HorizontalLayout {
         padding-left: 10px; padding-right: 10px;
         Text {
-            text: root.text;
-            color: root.tint;
-            font-size: 12px;
-            font-weight: 700;
-            vertical-alignment: center;
+            text: root.text; color: root.tint;
+            font-size: 12px; font-weight: 700; vertical-alignment: center;
         }
     }
 }
@@ -48,17 +44,18 @@ component Card inherits Rectangle {
 
 export component AppWindow inherits Window {
     title: "网卡自适应测速";
-    preferred-width: 980px;
-    preferred-height: 700px;
+    preferred-width: 1000px;
+    preferred-height: 720px;
     min-width: 900px;
     min-height: 640px;
     background: Pal.plane;
     default-font-size: 14px;
 
-    // ── 状态 (Rust 填充) ──
-    in property <[string]> nic-names;
+    // ── 状态 ──
     in property <string> nic-detail: "—";
+    in property <string> selected-nic-name: "";
     in-out property <int> selected-nic: 0;
+    in property <[NicRow]> nic-list;
     in-out property <string> target: "";
     in-out property <bool> do-mtu: true;
     in-out property <bool> do-stats: true;
@@ -70,21 +67,19 @@ export component AppWindow inherits Window {
     in property <color> precheck-color: Pal.muted;
     in property <string> mtu-text: "—";
     in property <[TierRow]> tiers;
+    in property <string> log-text: "";
 
     in property <bool> show-hosts: false;
+    in property <bool> show-nics: false;
     in property <bool> scanning: false;
     in property <float> scan-progress: 0;
     in property <[HostRow]> hosts;
 
-    in property <string> chart-path;
-    in property <[ChartPoint]> chart-points;
-    in property <string> chart-ymax: "";
-    in property <string> chart-ymin: "";
-    in property <bool> has-chart: false;
-
-    // ── 事件 (Rust 处理) ──
+    // ── 事件 ──
     callback refresh-nics();
-    callback nic-changed(int);
+    callback open-nics();
+    callback close-nics();
+    callback pick-nic(int);
     callback open-scan();
     callback close-scan();
     callback pick-host(int);
@@ -98,12 +93,10 @@ export component AppWindow inherits Window {
             height: 64px;
             background: Pal.surface;
             HorizontalLayout {
-                padding-left: 24px; padding-right: 24px;
-                spacing: 12px;
+                padding-left: 24px; padding-right: 24px; spacing: 12px;
                 Rectangle {
                     width: 32px; height: 32px; y: (parent.height - self.height)/2;
-                    border-radius: 9px;
-                    background: Pal.accent.transparentize(0.8);
+                    border-radius: 9px; background: Pal.accent.transparentize(0.8);
                     Text { text: "◈"; color: Pal.accent; font-size: 18px; }
                 }
                 VerticalLayout {
@@ -111,7 +104,7 @@ export component AppWindow inherits Window {
                     Text { text: "网卡自适应测速"; color: Pal.ink; font-size: 18px; font-weight: 800; }
                     Text { text: "链路协商 100M / 10M / 1000M · 丢包 · 延迟 · MTU"; color: Pal.muted; font-size: 11px; }
                 }
-                Rectangle {} // 撑开
+                Rectangle {}
                 VerticalLayout {
                     alignment: center;
                     HorizontalLayout {
@@ -143,35 +136,36 @@ export component AppWindow inherits Window {
                     Text { text: "配置"; color: Pal.ink; font-size: 15px; font-weight: 700; }
 
                     Text { text: "网卡"; color: Pal.ink2; font-size: 12px; }
-                    ComboBox {
-                        model: root.nic-names;
-                        current-index <=> root.selected-nic;
-                        enabled: !root.busy;
-                        selected(v) => { root.nic-changed(self.current-index); }
+                    // 打开网卡选择弹窗
+                    Rectangle {
+                        height: 46px; border-radius: 10px;
+                        background: nicta.has-hover ? Pal.card2 : Pal.surface;
+                        border-width: 1px; border-color: Pal.accent.transparentize(0.6);
+                        nicta := TouchArea { enabled: !root.busy; clicked => { root.open-nics(); } }
+                        HorizontalLayout {
+                            padding-left: 14px; padding-right: 14px; spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: root.selected-nic-name == "" ? "点击选择网卡" : root.selected-nic-name;
+                                    color: root.selected-nic-name == "" ? Pal.muted : Pal.ink;
+                                    font-size: 15px; font-weight: 700;
+                                }
+                            }
+                            Rectangle {}
+                            Text { text: "▾"; color: Pal.accent; font-size: 16px; vertical-alignment: center; }
+                        }
                     }
-                    Text {
-                        text: root.nic-detail;
-                        color: Pal.muted; font-size: 11px; wrap: word-wrap;
-                    }
-                    Button {
-                        text: "⟳  刷新网卡";
-                        enabled: !root.busy;
-                        clicked => { root.refresh-nics(); }
-                    }
+                    Text { text: root.nic-detail; color: Pal.muted; font-size: 11px; wrap: word-wrap; }
 
                     Rectangle { height: 1px; background: Pal.grid; }
 
                     Text { text: "目标 IP"; color: Pal.ink2; font-size: 12px; }
                     LineEdit {
                         placeholder-text: "例如 192.168.1.1";
-                        text <=> root.target;
-                        enabled: !root.busy;
+                        text <=> root.target; enabled: !root.busy;
                     }
-                    Button {
-                        text: "◎  扫描局域网";
-                        enabled: !root.busy;
-                        clicked => { root.open-scan(); }
-                    }
+                    Button { text: "◎  扫描局域网"; enabled: !root.busy; clicked => { root.open-scan(); } }
 
                     Rectangle { height: 1px; background: Pal.grid; }
 
@@ -188,33 +182,27 @@ export component AppWindow inherits Window {
                     HorizontalLayout {
                         alignment: space-between;
                         Text { text: "每档发包数"; color: Pal.ink2; font-size: 13px; vertical-alignment: center; }
-                        SpinBox {
-                            width: 110px;
-                            minimum: 3; maximum: 100;
-                            value <=> root.ping-count;
-                            enabled: !root.busy;
-                        }
+                        SpinBox { width: 110px; minimum: 3; maximum: 100; value <=> root.ping-count; enabled: !root.busy; }
                     }
 
-                    Rectangle {} // 撑开
+                    Rectangle {}
 
                     Button {
                         text: root.busy ? "测试进行中…" : "▶  开始测试";
                         primary: true;
-                        enabled: !root.busy && root.nic-names.length > 0;
+                        enabled: !root.busy && root.selected-nic-name != "";
                         height: 44px;
                         clicked => { root.start-test(); }
                     }
                 }
             }
 
-            // ── 右侧: 结果 ──
+            // ── 右侧: 结果 + 日志 ──
             Card {
                 horizontal-stretch: 1;
                 VerticalLayout {
-                    padding: 20px; spacing: 16px;
+                    padding: 20px; spacing: 14px;
 
-                    // 预检 & MTU 概览
                     HorizontalLayout {
                         spacing: 14px;
                         Rectangle {
@@ -241,7 +229,6 @@ export component AppWindow inherits Window {
                         background: Pal.card2; border-radius: 12px;
                         VerticalLayout {
                             padding: 6px;
-                            // 表头
                             HorizontalLayout {
                                 padding: 10px; spacing: 6px;
                                 Text { text: "档位"; width: 62px; color: Pal.muted; font-size: 11px; }
@@ -252,7 +239,7 @@ export component AppWindow inherits Window {
                                 Text { text: "判定"; color: Pal.muted; font-size: 11px; }
                             }
                             for row in root.tiers : Rectangle {
-                                height: 46px;
+                                height: 44px;
                                 background: touch.has-hover ? Pal.card : transparent;
                                 border-radius: 8px;
                                 touch := TouchArea {}
@@ -269,15 +256,12 @@ export component AppWindow inherits Window {
                                     Text { text: row.err; width: 48px; color: row.err == "0" ? Pal.ink2 : Pal.crit; font-size: 13px; vertical-alignment: center; }
                                     HorizontalLayout {
                                         alignment: start;
-                                        VerticalLayout {
-                                            alignment: center;
-                                            Chip { text: row.verdict; tint: row.color; }
-                                        }
+                                        VerticalLayout { alignment: center; Chip { text: row.verdict; tint: row.color; } }
                                     }
                                 }
                             }
                             if root.tiers.length == 0 : Rectangle {
-                                height: 80px;
+                                height: 60px;
                                 Text {
                                     text: "尚无数据 · 选好网卡与目标后点“开始测试”";
                                     color: Pal.muted; font-size: 12px;
@@ -287,62 +271,27 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // 延迟折线图
-                    Text { text: "各档平均延迟 (ms)"; color: Pal.ink; font-size: 15px; font-weight: 700; }
-                    Rectangle {
-                        background: Pal.surface; border-radius: 12px;
-                        vertical-stretch: 1; min-height: 180px;
-                        HorizontalLayout {
-                            padding: 14px; spacing: 8px;
-                            // y 轴刻度
-                            VerticalLayout {
-                                width: 44px;
-                                Text { text: root.chart-ymax; color: Pal.muted; font-size: 10px; horizontal-alignment: right; }
-                                Rectangle {}
-                                Text { text: root.chart-ymin; color: Pal.muted; font-size: 10px; horizontal-alignment: right; }
-                            }
-                            // 绘图区
-                            plot := Rectangle {
-                                horizontal-stretch: 1;
-                                // 基线
-                                Rectangle { y: parent.height - 1px; height: 1px; background: Pal.grid; }
-                                if root.has-chart : Path {
-                                    width: 100%; height: 100%;
-                                    viewbox-x: 0; viewbox-y: 0; viewbox-width: 100; viewbox-height: 100;
-                                    commands: root.chart-path;
-                                    stroke: Pal.accent;
-                                    stroke-width: 2px;
-                                }
-                                for pt in root.chart-points : Rectangle {
-                                    width: 10px; height: 10px; border-radius: 5px;
-                                    background: Pal.accent;
-                                    border-width: 2px; border-color: Pal.surface;
-                                    x: parent.width * pt.x - self.width/2;
-                                    y: parent.height * pt.y - self.height/2;
-                                }
-                                for pt in root.chart-points : Text {
-                                    text: pt.value;
-                                    color: Pal.ink; font-size: 10px; font-weight: 700;
-                                    x: parent.width * pt.x - self.width/2;
-                                    y: parent.height * pt.y - 22px;
-                                    horizontal-alignment: center;
-                                }
-                                if !root.has-chart : Text {
-                                    text: "测试完成后显示折线图";
-                                    color: Pal.muted; font-size: 12px;
-                                    x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
-                                }
-                            }
-                        }
-                    }
-                    // x 轴档位标签
+                    // 运行日志
                     HorizontalLayout {
-                        padding-left: 52px;
-                        for pt in root.chart-points : Text {
-                            text: pt.label;
-                            color: Pal.muted; font-size: 11px;
-                            horizontal-alignment: center;
-                            horizontal-stretch: 1;
+                        Text { text: "运行日志"; color: Pal.ink; font-size: 15px; font-weight: 700; }
+                        Rectangle {}
+                        Text { text: "ping 逐包 [*] · 调速/协商过程 [+]"; color: Pal.muted; font-size: 11px; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        background: #000000.transparentize(0.35); border-radius: 12px;
+                        vertical-stretch: 1; min-height: 190px; clip: true;
+                        border-width: 1px; border-color: Pal.grid;
+                        logflick := Flickable {
+                            viewport-width: self.width;
+                            viewport-height: logtxt.preferred-height + 20px;
+                            // 始终吸附到底部 (自动滚动到最新)
+                            viewport-y: min(0px, self.height - self.viewport-height);
+                            logtxt := Text {
+                                x: 12px; y: 10px; width: parent.width - 24px;
+                                text: root.log-text == "" ? "等待开始…" : root.log-text;
+                                color: Pal.ink2; font-family: "monospace"; font-size: 11.5px;
+                                wrap: word-wrap;
+                            }
                         }
                     }
                 }
@@ -350,7 +299,70 @@ export component AppWindow inherits Window {
         }
     }
 
-    // ───────── 局域网扫描浮层 ─────────
+    // ───────── 网卡选择弹窗 ─────────
+    if root.show-nics : Rectangle {
+        background: #000000.transparentize(0.5);
+        TouchArea { clicked => { root.close-nics(); } }
+        Rectangle {
+            width: 480px; height: 440px;
+            background: Pal.card; border-radius: 18px;
+            border-width: 1px; border-color: #ffffff.transparentize(0.9);
+            TouchArea {}
+            VerticalLayout {
+                padding: 20px; spacing: 12px;
+                HorizontalLayout {
+                    Text { text: "选择网卡"; color: Pal.ink; font-size: 16px; font-weight: 800; }
+                    Rectangle {}
+                    Text {
+                        text: "⟳"; color: Pal.accent; font-size: 18px;
+                        TouchArea { clicked => { root.refresh-nics(); } }
+                    }
+                    Rectangle { width: 8px; }
+                    Text {
+                        text: "✕"; color: Pal.muted; font-size: 16px;
+                        TouchArea { clicked => { root.close-nics(); } }
+                    }
+                }
+                Text { text: "点选一个网卡作为测速对象"; color: Pal.muted; font-size: 12px; }
+                if root.nic-list.length > 0 : ListView {
+                    vertical-stretch: 1;
+                    for n[i] in root.nic-list : Rectangle {
+                        height: 60px;
+                        background: nta.has-hover ? Pal.card2 : Pal.surface;
+                        border-radius: 10px;
+                        border-width: root.selected-nic == i ? 2px : 0px;
+                        border-color: Pal.accent;
+                        nta := TouchArea { clicked => { root.pick-nic(i); } }
+                        HorizontalLayout {
+                            padding-left: 14px; padding-right: 14px; spacing: 12px;
+                            Rectangle {
+                                width: 10px; height: 10px; border-radius: 5px; y: (parent.height - self.height)/2;
+                                background: n.up ? Pal.good : Pal.muted;
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: n.name; color: Pal.ink; font-size: 16px; font-weight: 700; }
+                                Text { text: n.detail; color: Pal.muted; font-size: 11px; }
+                            }
+                            Rectangle {}
+                            if root.selected-nic == i : VerticalLayout {
+                                alignment: center;
+                                Text { text: "✓"; color: Pal.accent; font-size: 18px; font-weight: 800; }
+                            }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Pal.grid; }
+                    }
+                }
+                if root.nic-list.length == 0 : Rectangle {
+                    vertical-stretch: 1;
+                    Text { text: "未检测到网卡 (点右上 ⟳ 刷新)"; color: Pal.muted; font-size: 12px;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+
+    // ───────── 局域网扫描弹窗 ─────────
     if root.show-hosts : Rectangle {
         background: #000000.transparentize(0.5);
         TouchArea { clicked => { root.close-scan(); } }
@@ -358,23 +370,20 @@ export component AppWindow inherits Window {
             width: 460px; height: 460px;
             background: Pal.card; border-radius: 18px;
             border-width: 1px; border-color: #ffffff.transparentize(0.9);
-            TouchArea {} // 吃掉点击, 防止穿透关闭
+            TouchArea {}
             VerticalLayout {
                 padding: 20px; spacing: 12px;
                 HorizontalLayout {
                     Text { text: "局域网主机发现"; color: Pal.ink; font-size: 16px; font-weight: 800; }
                     Rectangle {}
-                    Text {
-                        text: "✕"; color: Pal.muted; font-size: 16px;
-                        TouchArea { clicked => { root.close-scan(); } }
-                    }
+                    Text { text: "✕"; color: Pal.muted; font-size: 16px;
+                           TouchArea { clicked => { root.close-scan(); } } }
                 }
                 if root.scanning : Rectangle {
                     height: 6px; border-radius: 3px; background: Pal.grid;
                     Rectangle {
                         x: 0; height: 100%; border-radius: 3px;
-                        width: parent.width * root.scan-progress;
-                        background: Pal.accent;
+                        width: parent.width * root.scan-progress; background: Pal.accent;
                     }
                 }
                 Text {
@@ -397,10 +406,7 @@ export component AppWindow inherits Window {
                                 Text { text: h.mac; color: Pal.muted; font-size: 10px; }
                             }
                             Rectangle {}
-                            if h.is-self : VerticalLayout {
-                                alignment: center;
-                                Chip { text: "本机"; tint: Pal.muted; }
-                            }
+                            if h.is-self : VerticalLayout { alignment: center; Chip { text: "本机"; tint: Pal.muted; } }
                         }
                     }
                 }

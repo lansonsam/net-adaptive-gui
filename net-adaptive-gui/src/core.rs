@@ -5,7 +5,7 @@
 // ════════════════════════════════════════════════════════════
 
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -108,15 +108,52 @@ pub fn restore_nic(nic: &str) {
 }
 
 // ───────────── ping 封装与解析 ─────────────
-fn ping_capture(args: &[&str]) -> String {
-    match Command::new("ping").args(args).env("LC_ALL", "C").output() {
-        Ok(o) => {
-            let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
-            s.push_str(&String::from_utf8_lossy(&o.stderr));
-            s
+// 逐行流式执行 ping: 每读到一行调用 on_line, 同时返回完整输出。
+// 优先用 stdbuf -oL 让 ping 行缓冲, 从而实时逐行输出。
+fn ping_stream(args: &[&str], mut on_line: impl FnMut(&str)) -> String {
+    let spawn = |use_stdbuf: bool| {
+        if use_stdbuf {
+            Command::new("stdbuf")
+                .arg("-oL")
+                .arg("ping")
+                .args(args)
+                .env("LC_ALL", "C")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+        } else {
+            Command::new("ping")
+                .args(args)
+                .env("LC_ALL", "C")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
         }
-        Err(_) => String::new(),
+    };
+    let mut child = match spawn(true).or_else(|_| spawn(false)) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    let mut full = String::new();
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            on_line(&line);
+            full.push_str(&line);
+            full.push('\n');
+        }
     }
+    let _ = child.wait();
+    if let Some(mut e) = child.stderr.take() {
+        let mut s = String::new();
+        let _ = e.read_to_string(&mut s);
+        if !s.trim().is_empty() {
+            for l in s.lines() {
+                on_line(l);
+            }
+            full.push_str(&s);
+        }
+    }
+    full
 }
 fn ping_ok(args: &[&str]) -> bool {
     Command::new("ping")
@@ -317,16 +354,19 @@ pub fn scan_hosts<F: Fn(u32, u32)>(nic: &str, progress: F) -> Result<Vec<Host>, 
 }
 
 // ───────────── 连通性预检 ─────────────
-pub fn connectivity(target: &str, seconds: u32) -> Check {
-    let out = ping_capture(&[
-        "-c",
-        &seconds.to_string(),
-        "-i",
-        "1",
-        "-w",
-        &(seconds + 2).to_string(),
-        target,
-    ]);
+pub fn connectivity(target: &str, seconds: u32, on_line: impl FnMut(&str)) -> Check {
+    let out = ping_stream(
+        &[
+            "-c",
+            &seconds.to_string(),
+            "-i",
+            "1",
+            "-w",
+            &(seconds + 2).to_string(),
+            target,
+        ],
+        on_line,
+    );
     let loss = parse_loss(&out);
     let avg = parse_rtt(&out).map(|(_, a, _, _)| a);
     let reachable = !(loss.is_none() || matches!(loss, Some(l) if l >= 100.0));
@@ -381,7 +421,13 @@ pub fn read_link(nic: &str) -> (String, String, bool) {
 }
 
 // ───────────── 单档发包测试 (设置协商由调用方先做; 此处只发包+统计) ─────────────
-pub fn run_ping_tier(nic: &str, target: &str, count: u32, do_stats: bool) -> Tier {
+pub fn run_ping_tier(
+    nic: &str,
+    target: &str,
+    count: u32,
+    do_stats: bool,
+    on_line: impl FnMut(&str),
+) -> Tier {
     let (speed, duplex, link) = read_link(nic);
 
     let base = if do_stats {
@@ -397,7 +443,7 @@ pub fn run_ping_tier(nic: &str, target: &str, count: u32, do_stats: bool) -> Tie
         (0, 0, 0, 0, 0, 0)
     };
 
-    let out = ping_capture(&["-c", &count.to_string(), target]);
+    let out = ping_stream(&["-c", &count.to_string(), target], on_line);
     let loss = parse_loss(&out);
     let rtt = parse_rtt(&out);
 
