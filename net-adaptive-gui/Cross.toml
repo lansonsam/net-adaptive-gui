@@ -1,0 +1,7 @@
+# cross 交叉编译配置: 在 ARM64 Linux 容器里装好链接期需要的原生库
+# (Slint 的 fontique 会链接 libfontconfig; 其余 X11/Wayland/GL 均运行时 dlopen)
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture arm64",
+    "apt-get update && apt-get install --assume-yes libfontconfig1-dev:arm64 libfreetype6-dev:arm64",
+]

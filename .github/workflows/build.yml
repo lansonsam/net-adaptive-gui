@@ -1,0 +1,46 @@
+name: build-arm64
+
+# 在 GitHub 托管的原生 ARM64 (aarch64) Linux runner 上编译,
+# 无需交叉编译, apt 直接装依赖。产物在 Actions 的 Artifacts 里下载。
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04-arm       # 原生 aarch64 runner (公开仓库免费)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装系统依赖 (Slint 链接期需要 fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev libfreetype6-dev libxkbcommon-dev file
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 编译 CLI (net-adaptive-test)
+        working-directory: net-adaptive-test
+        run: cargo build --release
+
+      - name: 编译 GUI (net-adaptive-gui)
+        working-directory: net-adaptive-gui
+        run: cargo build --release
+
+      - name: 收集产物
+        run: |
+          mkdir -p dist
+          cp net-adaptive-test/target/release/net-adaptive-test dist/
+          cp net-adaptive-gui/target/release/net-adaptive-gui  dist/
+          echo "=== 架构确认 ==="
+          file dist/*
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-binaries
+          path: dist/
+          if-no-files-found: error

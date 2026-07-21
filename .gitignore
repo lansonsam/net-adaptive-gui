@@ -1,0 +1,10 @@
+# Rust 构建产物
+target/
+**/target/
+
+# 原始脚本 (含明文 sudo 密码, 不入库)
+自适应网络测试_beta.sh
+
+# 杂项
+*.log
+.DS_Store

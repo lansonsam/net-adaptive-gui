@@ -1,0 +1,17 @@
+[package]
+name = "net-adaptive-gui"
+version = "0.1.0"
+edition = "2021"
+description = "网卡自适应测速 · Slint (Material) 图形界面"
+
+[dependencies]
+slint = "1.9"
+
+[build-dependencies]
+slint-build = "1.9"
+
+[profile.release]
+opt-level = 2
+lto = true
+codegen-units = 1
+strip = true
