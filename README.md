@@ -12,10 +12,10 @@
 
 ## 构建 (GitHub Actions, 推荐)
 
-推到 GitHub 后，`.github/workflows/build.yml` 会在**原生 ARM64 runner** 上编译两个二进制，
-到 Actions run 的 **Artifacts** 里下载 `arm64-binaries`（内含 CLI 与 GUI）。
+推到 GitHub 后，`.github/workflows/build.yml` 会在**原生 amd64 runner** 上编译两个二进制，
+到 Actions run 的 **Artifacts** 里下载 `amd64-binaries`（内含 CLI 与 GUI）。
 
-手动触发：Actions 页面选 `build-arm64` → Run workflow；或 `gh workflow run build-arm64`。
+手动触发：Actions 页面选 `build-amd64` → Run workflow；或 `gh workflow run build-amd64`。
 
 ## 运行 (ARM 设备上)
 

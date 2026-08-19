@@ -1,15 +1,18 @@
-name: build-arm64
+name: build-amd64
 
-# 在原生 ARM64 runner 上、于 Debian 11 容器(glibc 2.31)内编译,
-# 以兼容较老 glibc 的 ARM 设备。产物在 Actions 的 Artifacts 里下载。
+# 在 amd64 runner 上、于 Debian 11 容器(glibc 2.31)内编译,
+# 以兼容较老 glibc 的 x86_64 设备。产物在 Actions 的 Artifacts 里下载。
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: ubuntu-22.04-arm          # 原生 aarch64 runner
+    runs-on: ubuntu-22.04              # 原生 amd64 runner
     container: debian:11               # glibc 2.31, 向下兼容老设备
     steps:
       - name: 装基础工具与 Slint 依赖
@@ -46,6 +49,6 @@ jobs:
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: arm64-binaries
+          name: amd64-binaries
           path: dist/
           if-no-files-found: error
