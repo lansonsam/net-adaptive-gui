@@ -60,6 +60,7 @@ export component AppWindow inherits Window {
     in-out property <bool> do-mtu: true;
     in-out property <bool> do-stats: true;
     in-out property <int> ping-count: 10;
+    in-out property <int> settle-sec: 5;
 
     in property <bool> busy: false;
     in property <string> status: "就绪";
@@ -183,6 +184,15 @@ export component AppWindow inherits Window {
                         alignment: space-between;
                         Text { text: "每档发包数"; color: Pal.ink2; font-size: 13px; vertical-alignment: center; }
                         SpinBox { width: 110px; minimum: 3; maximum: 100; value <=> root.ping-count; enabled: !root.busy; }
+                    }
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "协商等待 (秒)"; color: Pal.ink2; font-size: 13px; vertical-alignment: center; }
+                        SpinBox { width: 110px; minimum: 1; maximum: 60; value <=> root.settle-sec; enabled: !root.busy; }
+                    }
+                    Text {
+                        text: "切档后等待链路协商稳定的时长, 丢包偏多可调大 (如 8 / 10 / 15 秒)";
+                        color: Pal.muted; font-size: 11px; wrap: word-wrap;
                     }
 
                     Rectangle {}

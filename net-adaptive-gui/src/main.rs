@@ -9,8 +9,6 @@ use std::sync::{Arc, Mutex};
 
 slint::include_modules!();
 
-const SETTLE: u32 = core::SETTLE_SEC;
-
 fn verdict_rgb(v: core::Verdict) -> (u8, u8, u8) {
     match v {
         core::Verdict::Pass => (0x0c, 0xa3, 0x0c),
@@ -59,6 +57,7 @@ fn nic_row(n: &core::Nic) -> NicRow {
 
 fn main() -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+    ui.set_settle_sec(core::SETTLE_SEC as i32);
 
     let nics: Rc<std::cell::RefCell<Vec<core::Nic>>> = Rc::new(std::cell::RefCell::new(vec![]));
     let active_nic: Rc<std::cell::RefCell<Option<String>>> = Rc::new(std::cell::RefCell::new(None));
@@ -217,6 +216,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let do_mtu = ui.get_do_mtu();
             let do_stats = ui.get_do_stats();
             let count = ui.get_ping_count().max(1) as u32;
+            let settle = ui.get_settle_sec().max(1) as u32;
 
             *active_nic.borrow_mut() = Some(nic.clone());
             ui.set_busy(true);
@@ -229,7 +229,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
             let w = ui_weak.clone();
             std::thread::spawn(move || {
-                run_test_worker(w, nic, target, do_mtu, do_stats, count);
+                run_test_worker(w, nic, target, do_mtu, do_stats, count, settle);
             });
         });
     }
@@ -290,11 +290,13 @@ fn run_test_worker(
     do_mtu: bool,
     do_stats: bool,
     count: u32,
+    settle: u32,
 ) {
     let log = Arc::new(Mutex::new(String::new()));
     core::cache_sudo();
 
     push_log(&w, &log, &format!("[+] 目标 {} · 网卡 {}", target, nic));
+    push_log(&w, &log, &format!("[+] 每档 {} 包 · 协商等待 {}s", count, settle));
 
     // 1) 连通性预检
     set_status(&w, "连通性预检…".into());
@@ -369,7 +371,7 @@ fn run_test_worker(
         }
 
         // 协商稳定过程
-        for s in (1..=SETTLE).rev() {
+        for s in (1..=settle).rev() {
             set_status(&w, format!("{}: 链路协商稳定中 {}s", label, s));
             push_log(&w, &log, &format!("[+] 等待链路协商稳定… {}s", s));
             std::thread::sleep(std::time::Duration::from_secs(1));
