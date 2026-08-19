@@ -12,10 +12,17 @@
 
 ## 构建 (GitHub Actions, 推荐)
 
-推到 GitHub 后，`.github/workflows/build.yml` 会在**原生 amd64 runner** 上编译两个二进制，
-到 Actions run 的 **Artifacts** 里下载 `amd64-binaries`（内含 CLI 与 GUI）。
+推到 GitHub 后，`.github/workflows/build.yml` 会在**原生 amd64 与 arm64 runner** 上各编译一套二进制，
+到 Actions run 的 **Artifacts** 里下载（每个包内含 CLI 与 GUI）：
 
-手动触发：Actions 页面选 `build-amd64` → Run workflow；或 `gh workflow run build-amd64`。
+| Artifact | 架构 | 适用设备 |
+|----------|------|----------|
+| `amd64-binaries` | x86_64 | PC / x86 服务器 |
+| `arm64-binaries` | aarch64 | ARM 设备 |
+
+两者都在 Debian 11 容器 (glibc 2.31) 内编译，兼容较老 glibc 的设备。
+
+手动触发：Actions 页面选 `build` → Run workflow；或 `gh workflow run build`。
 
 ## 运行 (ARM 设备上)
 
